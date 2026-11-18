@@ -27,13 +27,13 @@ async function main() {
     resave: false,
     saveUninitialized: false,
     proxy: true,
-    cookie: { httpOnly: true, sameSite: 'lax', secure: isProd, maxAge: 7 * 24 * 3600 * 1000 },
+    cookie: { httpOnly: true, sameSite: 'lax', secure: isProd },
   });
   app.use(express.json());
   app.use(sessionMw);
   io.engine.use(sessionMw as any); // lets sockets read req.session
 
-  registerRoutes(app);
+  registerRoutes(app, io);
   setupGame(io);
 
   // In production the built React app is served by this same server.

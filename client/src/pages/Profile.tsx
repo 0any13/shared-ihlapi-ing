@@ -17,6 +17,7 @@ export default function Profile() {
   const loadQuestions = async () => setQuestions(await api<MyQuestion[]>('/api/my-questions'));
   useEffect(() => { if (me) loadQuestions().catch(() => {}); }, [me?.id]);
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { api('/api/warm', 'POST').catch(() => {}); }, []);
 
   const run = async (fn: () => Promise<void>) => {
     setMsg('');

@@ -2,9 +2,10 @@ import type { Express, Request, RequestHandler, Response } from 'express';
 import 'express-session';
 import bcrypt from 'bcryptjs';
 import { get, all, run } from './db';
-import { checkSimilar } from './similarity';
+import { checkSimilar, warmSimilarity } from './similarity';
 import { CREATOR_TIERS, ENDORSE_TIERS, tierName, nextAt } from './rules';
 import type { Me, MyQuestion } from '../shared/types';
+import type { GameServer } from './game';
 
 declare module 'express-session' {
   interface SessionData { user: { id: number; username: string } }
@@ -34,7 +35,7 @@ const ah = (fn: (req: Request, res: Response) => Promise<unknown>): RequestHandl
 const requireAuth: RequestHandler = (req, res, next) =>
   req.session.user ? next() : res.status(401).json({ error: 'Login required' });
 
-export function registerRoutes(app: Express) {
+export function registerRoutes(app: Express, io: GameServer) {
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
   app.post('/api/register', ah(async (req, res) => {
@@ -53,13 +54,29 @@ export function registerRoutes(app: Express) {
   }));
 
   app.post('/api/login', ah(async (req, res) => {
-    const { username, password } = req.body ?? {};
-    const u = await get<{ id: number; username: string; password_hash: string }>('SELECT * FROM users WHERE username = $1', String(username ?? ''));
-    if (!u || !(await bcrypt.compare(String(password ?? ''), u.password_hash)))
-      return res.status(401).json({ error: 'Wrong username or password' });
-    req.session.user = { id: u.id, username: u.username };
-    res.json(req.session.user);
-  }));
+  const { username, password, takeOver } = req.body ?? {};
+  const u = await get<{ id: number; username: string; password_hash: string }>('SELECT * FROM users WHERE username = $1', String(username ?? ''));
+  if (!u || !(await bcrypt.compare(String(password ?? ''), u.password_hash)))
+    return res.status(401).json({ error: 'Wrong username or password' });
+
+  // other live sessions of this account (connect-pg-simple keeps them in the "session" table)
+  const others = await all<{ sid: string }>(
+    `SELECT sid FROM session WHERE sess->'user'->>'id' = $1 AND expire > now() AND sid <> $2`,
+    String(u.id), req.sessionID);
+  if (others.length) {
+    if (takeOver !== true)
+      return res.status(409).json({ error: 'This account is already signed in somewhere else.', code: 'ALREADY_LOGGED_IN' });
+    await run('DELETE FROM session WHERE sid = ANY($1::text[])', others.map(o => o.sid));
+    for (const s of io.sockets.sockets.values()) {
+      if (s.data.userId === u.id) {
+        s.emit('error-msg', 'You were signed out because this account was opened somewhere else.');
+        s.disconnect();
+      }
+    }
+  }
+  req.session.user = { id: u.id, username: u.username };
+  res.json(req.session.user);
+}));
 
   app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
 
@@ -103,6 +120,8 @@ export function registerRoutes(app: Express) {
       code, mode, req.session.user!.id, discordLink || null);
     res.json({ code });
   }));
+
+  app.post('/api/warm', requireAuth, (_req, res) => { warmSimilarity(); res.json({ ok: true }); });
 
   app.get('/api/rooms/:code', requireAuth, ah(async (req, res) => {
     const room = await get<{ code: string; mode: string; discord_link: string | null }>(

@@ -10,7 +10,7 @@ export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, {}, 
 
 interface RoomRow { id: number; code: string; mode: 'original' | 'mixed'; host_id: number; discord_link: string | null }
 interface QuestionRow { id: number; text: string; level: Level; is_original: boolean; author_id: number | null }
-interface Player { id: number; username: string; color: string }
+interface Player { id: number; username: string; color: string; sid: string }
 interface Live {
   room: RoomRow;
   players: Player[];
@@ -105,9 +105,16 @@ export function setupGame(io: GameServer) {
         drawerSpeaking: false, drawn: new Set(), seq: 0, spoken: [], level: 1, drawnBy: newDrawnBy(), finished: false,
       };
       const l = live[code];
-      if (!l.players.find(p => p.id === user.id)) {
+      let me = l.players.find(p => p.id === user.id);
+      if (!me) {
         const color = (await get<{ color: string }>('SELECT color FROM users WHERE id = $1', user.id))?.color || DEFAULT_COLOR;
-        if (!l.players.find(p => p.id === user.id)) l.players.push({ id: user.id, username: user.username, color });
+        me = l.players.find(p => p.id === user.id); // re-check after the await
+        if (!me) { me = { id: user.id, username: user.username, color, sid: socket.id }; l.players.push(me); }
+      }
+      if (me.sid !== socket.id) { // same account joined from another tab: the newest tab wins
+        const old = io.sockets.sockets.get(me.sid);
+        me.sid = socket.id;
+        if (old) { old.emit('error-msg', 'This account was opened in another tab, so this one was disconnected.'); old.disconnect(); }
       }
       const history = (await all<{ username: string; color: string; text: string }>(
         `SELECT u.username, u.color, m.text FROM messages m JOIN users u ON u.id = m.user_id
@@ -215,6 +222,7 @@ export function setupGame(io: GameServer) {
       if (!code || !l) return;
       const idx = l.players.findIndex(p => p.id === user.id);
       if (idx === -1) return;
+      if (l.players[idx].sid !== socket.id) return; 
       l.players.splice(idx, 1);
       if (l.players.length === 0) { delete live[code]; return; }
       l.hands = l.hands.filter(id => id !== user.id);

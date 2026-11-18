@@ -24,3 +24,11 @@ export async function checkSimilar(text: string): Promise<SimilarityResult | nul
     return null;
   }
 }
+let lastWarm = 0;
+/** Fire-and-forget: wakes the sleeping service. At most once every 5 minutes. */
+export function warmSimilarity(): void {
+  const base = process.env.SIMILARITY_URL;
+  if (!base || Date.now() - lastWarm < 5 * 60_000) return;
+  lastWarm = Date.now();
+  fetch(`${base.replace(/\/$/, '')}/health`, { signal: AbortSignal.timeout(90_000) }).catch(() => {});
+}

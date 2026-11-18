@@ -5,22 +5,28 @@ import { useAuth } from '../auth';
 import { PALETTE } from '../palette';
 import { PreviewMan } from '../components/Stickman';
 import { Swatches } from '../components/Swatches';
+import { ApiError } from '../api';
 
 function AuthForm() {
   const { refresh } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [conflict, setConflict] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [color, setColor] = useState(PALETTE[0]);
   const [msg, setMsg] = useState('');
   const reg = mode === 'register';
 
-  const submit = async () => {
-    setMsg('');
-    try {
-      await api(reg ? '/api/register' : '/api/login', 'POST', reg ? { username, password, color } : { username, password });
-      await refresh();
-    } catch (e) { setMsg(errorMessage(e)); }
+  const submit = async (takeOver = false) => {
+  setMsg('');
+  try {
+    await api(reg ? '/api/register' : '/api/login', 'POST', reg ? { username, password, color } : { username, password, takeOver });
+    setConflict(false);
+    await refresh();
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'ALREADY_LOGGED_IN') setConflict(true);
+    else setMsg(errorMessage(e));
+  }
   };
 
   return (
@@ -36,7 +42,17 @@ function AuthForm() {
             <Swatches value={color} onPick={setColor} />
           </div>
         )}
-        <button className={'btn w-full ' + (reg ? 'btn-pink' : 'btn-cyan')} onClick={submit}>{reg ? 'Create account' : 'Log in'}</button>
+        {conflict && (
+          <div className="panel space-y-3" style={{ borderColor: 'var(--orange)' }}>
+            <p className="font-bold">This account is already signed in somewhere else.</p>
+            <p className="text-sm muted">Sign it out there and continue here, or cancel and go back to the other session.</p>
+            <div className="flex gap-2">
+              <button type="button" className="btn btn-orange" onClick={() => submit(true)}>Sign out there, log in here</button>
+              <button type="button" className="btn btn-ghost" onClick={() => { setConflict(false); setPassword(''); }}>Cancel</button>
+            </div>
+          </div>
+        )}
+        <button className={'btn w-full ' + (reg ? 'btn-pink' : 'btn-cyan')} onClick={() => submit()} >{reg ? 'Create account' : 'Log in'}</button>
         <p className="text-sm muted text-center">
           {reg ? 'Already have an account?' : 'New here?'}{' '}
           <button type="button" className="link" onClick={() => { setMode(reg ? 'login' : 'register'); setMsg(''); }}>
