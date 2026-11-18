@@ -2,6 +2,7 @@ import type { Express, Request, RequestHandler, Response } from 'express';
 import 'express-session';
 import bcrypt from 'bcryptjs';
 import { get, all, run } from './db';
+import { checkSimilar } from './similarity';
 import { CREATOR_TIERS, ENDORSE_TIERS, tierName, nextAt } from './rules';
 import type { Me, MyQuestion } from '../shared/types';
 
@@ -83,6 +84,11 @@ export function registerRoutes(app: Express) {
     const { text, level } = req.body ?? {};
     if (typeof text !== 'string' || text.trim().length < 10 || text.length > 200 || ![1, 2, 3].includes(Number(level)))
       return res.status(400).json({ error: 'Text 10-200 chars and level 1-3 required' });
+    // Ask the PHP service whether this is (almost) a copy of an existing card. Only the card text is ever shown, never its author.
+    const sim = await checkSimilar(text.trim());
+    if (sim?.verdict === 'duplicate') {
+      return res.status(409).json({ error: `Too close to an existing card: "${sim.top[0].text}". Try a different angle.` });
+    }
     await run('INSERT INTO questions (text, level, author_id, is_original) VALUES ($1, $2, $3, FALSE)',
       text.trim(), Number(level), req.session.user!.id);
     res.json(await getMe(req.session.user!.id));
